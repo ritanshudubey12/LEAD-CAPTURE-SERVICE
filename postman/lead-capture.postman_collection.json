@@ -1,0 +1,2652 @@
+{
+  "info": {
+    "name": "Lead Capture API",
+    "description": "Folders 1-4 and 6 are happy-path calls that return 200 OK; folder 5 sends bad input on purpose and asserts the exact expected error status. A collection pre-request script auto-generates the Bearer JWT and tenant/org headers when they are empty.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "",
+          "const secret = pm.variables.get('jwt_secret');",
+          "const now = Math.floor(Date.now() / 1000);",
+          "let exp = Number(pm.collectionVariables.get('token_exp') || 0);",
+          "if (!pm.variables.get('tenantId')) pm.collectionVariables.set('tenantId', '1001');",
+          "if (!pm.variables.get('orgId')) pm.collectionVariables.set('orgId', '2001');",
+          "if (!pm.variables.get('userId')) pm.collectionVariables.set('userId', '3001');",
+          "const b64 = (w) => CryptoJS.enc.Base64.stringify(w).replace(/=+$/, '').replace(/\\+/g, '-').replace(/\\//g, '_');",
+          "const sign = (over, key) => {",
+          "  const header = b64(CryptoJS.enc.Utf8.parse(JSON.stringify({ alg: 'HS256', typ: 'JWT' })));",
+          "  const payload = b64(CryptoJS.enc.Utf8.parse(JSON.stringify(Object.assign({",
+          "    sub: pm.variables.get('userId'), tenant_id: pm.variables.get('tenantId'),",
+          "    organization_ids: [pm.variables.get('orgId')], permissions: ['*'],",
+          "    iss: pm.variables.get('jwt_issuer'), aud: pm.variables.get('jwt_audience'), iat: now, exp: now + 3600,",
+          "  }, over))));",
+          "  return header + '.' + payload + '.' + b64(CryptoJS.HmacSHA256(header + '.' + payload, key || secret));",
+          "};",
+          "if (!pm.variables.get('token') || exp - now < 60) {",
+          "  pm.collectionVariables.set('token', sign({}));",
+          "  pm.collectionVariables.set('token_exp', String(now + 3600));",
+          "}",
+          "// Extra tokens used by the negative-case folder (always regenerated).",
+          "pm.collectionVariables.set('expired_token', sign({ iat: now - 7200, exp: now - 3600 }));",
+          "pm.collectionVariables.set('bad_signature_token', sign({}, 'a-completely-different-secret'));",
+          "pm.collectionVariables.set('limited_token', sign({ permissions: ['forms.read'] }));",
+          "pm.collectionVariables.set('other_tenant_token', sign({ tenant_id: '8001', organization_ids: ['8002'] }));",
+          ""
+        ]
+      }
+    }
+  ],
+  "variable": [
+    {
+      "key": "token",
+      "value": ""
+    },
+    {
+      "key": "token_exp",
+      "value": ""
+    },
+    {
+      "key": "formId",
+      "value": ""
+    },
+    {
+      "key": "publicKey",
+      "value": ""
+    },
+    {
+      "key": "formVersion",
+      "value": ""
+    },
+    {
+      "key": "submissionId",
+      "value": ""
+    },
+    {
+      "key": "leadEmail",
+      "value": ""
+    },
+    {
+      "key": "leadEmail2",
+      "value": ""
+    },
+    {
+      "key": "formName",
+      "value": ""
+    },
+    {
+      "key": "spoofName",
+      "value": ""
+    },
+    {
+      "key": "bigPayload",
+      "value": ""
+    },
+    {
+      "key": "expired_token",
+      "value": ""
+    },
+    {
+      "key": "bad_signature_token",
+      "value": ""
+    },
+    {
+      "key": "limited_token",
+      "value": ""
+    },
+    {
+      "key": "other_tenant_token",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "1. Health",
+      "item": [
+        {
+          "name": "Health live",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('status ok', () => { const j = pm.response.json(); pm.expect(j.status === 'ok').to.be.true; });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/health/live",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "health",
+                "live"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Health ready",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('db ready', () => { const j = pm.response.json(); pm.expect(j.status === 'ready').to.be.true; });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/health/ready",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "health",
+                "ready"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "2. Forms (Bearer JWT)",
+      "item": [
+        {
+          "name": "Create form",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('formName', 'Contact ' + Date.now());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200 OK', () => pm.response.to.have.status(200));",
+                  "const d = pm.response.json().data;",
+                  "pm.collectionVariables.set('formId', d.id);",
+                  "pm.collectionVariables.set('publicKey', d.publicKey);",
+                  "pm.test('ids are strings and tenant matches', () => { const j = pm.response.json(); pm.expect(typeof j.data.id === 'string' && j.data.tenantId === pm.variables.get('tenantId')).to.be.true; });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenantId}}"
+              },
+              {
+                "key": "X-Organization-Id",
+                "value": "{{orgId}}"
+              },
+              {
+                "key": "X-Request-Id",
+                "value": "pm-{{$guid}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"{{formName}}\",\n  \"websiteId\": \"77\",\n  \"allowedOrigins\": [\n    \"https://site.example\"\n  ],\n  \"schema\": {\n    \"consentRequired\": true,\n    \"fields\": [\n      {\n        \"name\": \"full_name\",\n        \"type\": \"text\",\n        \"required\": true\n      },\n      {\n        \"name\": \"email\",\n        \"type\": \"email\",\n        \"required\": true\n      },\n      {\n        \"name\": \"phone\",\n        \"type\": \"phone\"\n      },\n      {\n        \"name\": \"message\",\n        \"type\": \"textarea\"\n      }\n    ]\n  }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/forms",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "forms"
+              ]
+            }
+          }
+        },
+        {
+          "name": "List forms",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('has forms', () => { const j = pm.response.json(); pm.expect(Array.isArray(j.data) && j.data.length > 0).to.be.true; });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenantId}}"
+              },
+              {
+                "key": "X-Organization-Id",
+                "value": "{{orgId}}"
+              },
+              {
+                "key": "X-Request-Id",
+                "value": "pm-{{$guid}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/forms?limit=10",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "forms?limit=10"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get form",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('form with 1 version', () => { const j = pm.response.json(); pm.expect(j.data.id === pm.variables.get('formId') && j.data.versions.length === 1).to.be.true; });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenantId}}"
+              },
+              {
+                "key": "X-Organization-Id",
+                "value": "{{orgId}}"
+              },
+              {
+                "key": "X-Request-Id",
+                "value": "pm-{{$guid}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/forms/{{formId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "forms",
+                "{{formId}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Update form",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('name updated', () => { const j = pm.response.json(); pm.expect(j.data.name.endsWith('(edited)')).to.be.true; });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenantId}}"
+              },
+              {
+                "key": "X-Organization-Id",
+                "value": "{{orgId}}"
+              },
+              {
+                "key": "X-Request-Id",
+                "value": "pm-{{$guid}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"name\":\"{{formName}} (edited)\"}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/forms/{{formId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "forms",
+                "{{formId}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Create new version",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('version 2 created', () => { const j = pm.response.json(); pm.expect(j.data.version === 2).to.be.true; });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenantId}}"
+              },
+              {
+                "key": "X-Organization-Id",
+                "value": "{{orgId}}"
+              },
+              {
+                "key": "X-Request-Id",
+                "value": "pm-{{$guid}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"schema\": {\n    \"consentRequired\": true,\n    \"fields\": [\n      {\n        \"name\": \"full_name\",\n        \"type\": \"text\",\n        \"required\": true\n      },\n      {\n        \"name\": \"email\",\n        \"type\": \"email\",\n        \"required\": true\n      },\n      {\n        \"name\": \"phone\",\n        \"type\": \"phone\"\n      },\n      {\n        \"name\": \"message\",\n        \"type\": \"textarea\"\n      }\n    ]\n  }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/forms/{{formId}}/versions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "forms",
+                "{{formId}}",
+                "versions"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Publish latest version",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('published', () => { const j = pm.response.json(); pm.expect(j.data.status === 'published').to.be.true; });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenantId}}"
+              },
+              {
+                "key": "X-Organization-Id",
+                "value": "{{orgId}}"
+              },
+              {
+                "key": "X-Request-Id",
+                "value": "pm-{{$guid}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/forms/{{formId}}/publish",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "forms",
+                "{{formId}}",
+                "publish"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "3. Public intake (no JWT)",
+      "item": [
+        {
+          "name": "Get public form schema",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200 OK', () => pm.response.to.have.status(200));",
+                  "pm.collectionVariables.set('formVersion', pm.response.json().data.formVersion);",
+                  "pm.test('serves published version 2', () => { const j = pm.response.json(); pm.expect(j.data.formVersion === '2').to.be.true; });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Origin",
+                "value": "https://site.example"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/public/forms/{{publicKey}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "public",
+                "forms",
+                "{{publicKey}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Submit lead",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('leadEmail', 'asha+' + Date.now() + '@example.com');"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200 OK', () => pm.response.to.have.status(200));",
+                  "pm.collectionVariables.set('submissionId', pm.response.json().data.id);",
+                  "pm.test('stored as new lead', () => { const j = pm.response.json(); pm.expect(j.data.duplicate === false).to.be.true; });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Origin",
+                "value": "https://site.example"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"formVersion\": \"{{formVersion}}\",\n  \"fields\": { \"full_name\": \"Asha Sharma\", \"email\": \"{{leadEmail}}\", \"message\": \"Please contact me\" },\n  \"consent\": { \"accepted\": true, \"policyVersion\": \"privacy-v1\" }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/public/forms/{{publicKey}}/submissions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "public",
+                "forms",
+                "{{publicKey}}",
+                "submissions"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Submit same lead again (duplicate removed)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('duplicate returns original id', () => { const j = pm.response.json(); pm.expect(j.data.duplicate === true && j.data.id === pm.variables.get('submissionId')).to.be.true; });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Origin",
+                "value": "https://site.example"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"formVersion\": \"{{formVersion}}\",\n  \"fields\": { \"full_name\": \"Asha Sharma\", \"email\": \"{{leadEmail}}\", \"message\": \"Please contact me\" },\n  \"consent\": { \"accepted\": true, \"policyVersion\": \"privacy-v1\" }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/public/forms/{{publicKey}}/submissions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "public",
+                "forms",
+                "{{publicKey}}",
+                "submissions"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Submit lead with Idempotency-Key",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('leadEmail2', 'raj+' + Date.now() + '@example.com');"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('new lead', () => { const j = pm.response.json(); pm.expect(j.data.duplicate === false).to.be.true; });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "pm-{{$guid}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"formVersion\": \"{{formVersion}}\",\n  \"fields\": { \"full_name\": \"Asha Sharma\", \"email\": \"{{leadEmail2}}\", \"message\": \"Please contact me (idempotent)\" },\n  \"consent\": { \"accepted\": true, \"policyVersion\": \"privacy-v1\" }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/public/forms/{{publicKey}}/submissions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "public",
+                "forms",
+                "{{publicKey}}",
+                "submissions"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "4. Submissions & CRM delivery (Bearer JWT)",
+      "item": [
+        {
+          "name": "List submissions",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('exactly 2 stored (duplicate removed)', () => { const j = pm.response.json(); pm.expect(j.data.length === 2).to.be.true; });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenantId}}"
+              },
+              {
+                "key": "X-Organization-Id",
+                "value": "{{orgId}}"
+              },
+              {
+                "key": "X-Request-Id",
+                "value": "pm-{{$guid}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/forms/{{formId}}/submissions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "forms",
+                "{{formId}}",
+                "submissions"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get submission",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('email matches', () => { const j = pm.response.json(); pm.expect(j.data.fields.email === pm.variables.get('leadEmail')).to.be.true; });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenantId}}"
+              },
+              {
+                "key": "X-Organization-Id",
+                "value": "{{orgId}}"
+              },
+              {
+                "key": "X-Request-Id",
+                "value": "pm-{{$guid}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/submissions/{{submissionId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "submissions",
+                "{{submissionId}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Configure CRM integration",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('enabled; secret value not exposed', () => { const j = pm.response.json(); pm.expect(j.data.enabled === true && !JSON.stringify(j).includes(\"change-me\")).to.be.true; });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenantId}}"
+              },
+              {
+                "key": "X-Organization-Id",
+                "value": "{{orgId}}"
+              },
+              {
+                "key": "X-Request-Id",
+                "value": "pm-{{$guid}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"enabled\": true,\n  \"destinationUrl\": \"https://crm.example.com/leads\",\n  \"secretRef\": \"CRM_SERVICE_TOKEN\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/forms/{{formId}}/crm-integration",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "forms",
+                "{{formId}}",
+                "crm-integration"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get CRM integration",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('secret referenced by name', () => { const j = pm.response.json(); pm.expect(j.data.secretRef === 'CRM_SERVICE_TOKEN').to.be.true; });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenantId}}"
+              },
+              {
+                "key": "X-Organization-Id",
+                "value": "{{orgId}}"
+              },
+              {
+                "key": "X-Request-Id",
+                "value": "pm-{{$guid}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/forms/{{formId}}/crm-integration",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "forms",
+                "{{formId}}",
+                "crm-integration"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Retry delivery",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('queued', () => { const j = pm.response.json(); pm.expect(j.data.state === 'pending').to.be.true; });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenantId}}"
+              },
+              {
+                "key": "X-Organization-Id",
+                "value": "{{orgId}}"
+              },
+              {
+                "key": "X-Request-Id",
+                "value": "pm-{{$guid}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/submissions/{{submissionId}}/delivery/retry",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "submissions",
+                "{{submissionId}}",
+                "delivery",
+                "retry"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Delivery status",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('has delivery state', () => { const j = pm.response.json(); pm.expect(['pending','needs_attention','delivered','dead_letter'].includes(j.data.state)).to.be.true; });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenantId}}"
+              },
+              {
+                "key": "X-Organization-Id",
+                "value": "{{orgId}}"
+              },
+              {
+                "key": "X-Request-Id",
+                "value": "pm-{{$guid}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/submissions/{{submissionId}}/delivery",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "submissions",
+                "{{submissionId}}",
+                "delivery"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "5. Negative cases (expected errors)",
+      "item": [
+        {
+          "name": "Authentication",
+          "item": [
+            {
+              "name": "No token -> 401",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status is 401 Unauthorized', () => pm.response.to.have.status(401));",
+                      "pm.test('error code is unauthorized', () => { const j = pm.response.json(); pm.expect(j.error && j.error.code === 'unauthorized').to.be.true; });"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/forms",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "forms"
+                  ]
+                }
+              }
+            },
+            {
+              "name": "Malformed scheme (Basic) -> 401",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status is 401 Unauthorized', () => pm.response.to.have.status(401));",
+                      ""
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Basic abc"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/forms",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "forms"
+                  ]
+                }
+              }
+            },
+            {
+              "name": "Garbage token -> 401",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status is 401 Unauthorized', () => pm.response.to.have.status(401));",
+                      ""
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer not.a.jwt"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/forms",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "forms"
+                  ]
+                }
+              }
+            },
+            {
+              "name": "Wrong signature -> 401",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status is 401 Unauthorized', () => pm.response.to.have.status(401));",
+                      ""
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{bad_signature_token}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/forms",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "forms"
+                  ]
+                }
+              }
+            },
+            {
+              "name": "Expired token -> 401",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status is 401 Unauthorized', () => pm.response.to.have.status(401));",
+                      ""
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{expired_token}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/forms",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "forms"
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "Tenant / organization / permission",
+          "item": [
+            {
+              "name": "Tenant header mismatch -> 403",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status is 403 Forbidden', () => pm.response.to.have.status(403));",
+                      "pm.test('error code is forbidden', () => { const j = pm.response.json(); pm.expect(j.error && j.error.code === 'forbidden').to.be.true; });"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{token}}"
+                  },
+                  {
+                    "key": "X-Tenant-Id",
+                    "value": "424242"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/forms",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "forms"
+                  ]
+                }
+              }
+            },
+            {
+              "name": "Organization header not in token -> 403",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status is 403 Forbidden', () => pm.response.to.have.status(403));",
+                      ""
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{token}}"
+                  },
+                  {
+                    "key": "X-Tenant-Id",
+                    "value": "{{tenantId}}"
+                  },
+                  {
+                    "key": "X-Organization-Id",
+                    "value": "424242"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/forms",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "forms"
+                  ]
+                }
+              }
+            },
+            {
+              "name": "Tenant/org headers omitted -> auto-assigned from token (200)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status is 200 OK', () => pm.response.to.have.status(200));",
+                      ""
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{token}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/forms",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "forms"
+                  ]
+                }
+              }
+            },
+            {
+              "name": "Spoofed X-User-Id ignored (200, actor = token user)",
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.collectionVariables.set('spoofName', 'Spoof ' + Date.now());"
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status is 200 OK', () => pm.response.to.have.status(200));",
+                      "pm.test('createdByUserId comes from the token', () => { const j = pm.response.json(); pm.expect(j.data.createdByUserId === pm.variables.get('userId')).to.be.true; });"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{token}}"
+                  },
+                  {
+                    "key": "X-Tenant-Id",
+                    "value": "{{tenantId}}"
+                  },
+                  {
+                    "key": "X-Organization-Id",
+                    "value": "{{orgId}}"
+                  },
+                  {
+                    "key": "X-Request-Id",
+                    "value": "pm-{{$guid}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-User-Id",
+                    "value": "666"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"name\":\"{{spoofName}}\",\"websiteId\":\"1\"}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/forms",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "forms"
+                  ]
+                }
+              }
+            },
+            {
+              "name": "Token without forms.write -> 403",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status is 403 Forbidden', () => pm.response.to.have.status(403));",
+                      ""
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{limited_token}}"
+                  },
+                  {
+                    "key": "X-Tenant-Id",
+                    "value": "{{tenantId}}"
+                  },
+                  {
+                    "key": "X-Organization-Id",
+                    "value": "{{orgId}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"name\":\"nope\",\"websiteId\":\"1\"}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/forms",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "forms"
+                  ]
+                }
+              }
+            },
+            {
+              "name": "Other tenant cannot read this form -> 404",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status is 404 Not Found', () => pm.response.to.have.status(404));",
+                      ""
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{other_tenant_token}}"
+                  },
+                  {
+                    "key": "X-Tenant-Id",
+                    "value": "8001"
+                  },
+                  {
+                    "key": "X-Organization-Id",
+                    "value": "8002"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/forms/{{formId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "forms",
+                    "{{formId}}"
+                  ]
+                }
+              }
+            },
+            {
+              "name": "Other tenant cannot read submission -> 404",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status is 404 Not Found', () => pm.response.to.have.status(404));",
+                      ""
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{other_tenant_token}}"
+                  },
+                  {
+                    "key": "X-Tenant-Id",
+                    "value": "8001"
+                  },
+                  {
+                    "key": "X-Organization-Id",
+                    "value": "8002"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/submissions/{{submissionId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "submissions",
+                    "{{submissionId}}"
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "Forms validation",
+          "item": [
+            {
+              "name": "Create form without name -> 422",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status is 422 Unprocessable Entity', () => pm.response.to.have.status(422));",
+                      "pm.test('error code is validation_failed', () => { const j = pm.response.json(); pm.expect(j.error && j.error.code === 'validation_failed').to.be.true; });"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{token}}"
+                  },
+                  {
+                    "key": "X-Tenant-Id",
+                    "value": "{{tenantId}}"
+                  },
+                  {
+                    "key": "X-Organization-Id",
+                    "value": "{{orgId}}"
+                  },
+                  {
+                    "key": "X-Request-Id",
+                    "value": "pm-{{$guid}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/forms",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "forms"
+                  ]
+                }
+              }
+            },
+            {
+              "name": "Duplicate form name -> 409",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status is 409 Conflict', () => pm.response.to.have.status(409));",
+                      "pm.test('error code is conflict', () => { const j = pm.response.json(); pm.expect(j.error && j.error.code === 'conflict').to.be.true; });"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{token}}"
+                  },
+                  {
+                    "key": "X-Tenant-Id",
+                    "value": "{{tenantId}}"
+                  },
+                  {
+                    "key": "X-Organization-Id",
+                    "value": "{{orgId}}"
+                  },
+                  {
+                    "key": "X-Request-Id",
+                    "value": "pm-{{$guid}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"name\":\"{{spoofName}}\",\"websiteId\":\"1\"}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/forms",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "forms"
+                  ]
+                }
+              }
+            },
+            {
+              "name": "websiteId as a number -> 422",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status is 422 Unprocessable Entity', () => pm.response.to.have.status(422));",
+                      ""
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{token}}"
+                  },
+                  {
+                    "key": "X-Tenant-Id",
+                    "value": "{{tenantId}}"
+                  },
+                  {
+                    "key": "X-Organization-Id",
+                    "value": "{{orgId}}"
+                  },
+                  {
+                    "key": "X-Request-Id",
+                    "value": "pm-{{$guid}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"name\":\"x\",\"websiteId\":77}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/forms",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "forms"
+                  ]
+                }
+              }
+            },
+            {
+              "name": "Invalid schema field name -> 422",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status is 422 Unprocessable Entity', () => pm.response.to.have.status(422));",
+                      ""
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{token}}"
+                  },
+                  {
+                    "key": "X-Tenant-Id",
+                    "value": "{{tenantId}}"
+                  },
+                  {
+                    "key": "X-Organization-Id",
+                    "value": "{{orgId}}"
+                  },
+                  {
+                    "key": "X-Request-Id",
+                    "value": "pm-{{$guid}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"schema\":{\"fields\":[{\"name\":\"Bad Name\",\"type\":\"text\"}]}}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/forms/{{formId}}/versions",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "forms",
+                    "{{formId}}",
+                    "versions"
+                  ]
+                }
+              }
+            },
+            {
+              "name": "Non-numeric formId -> 400",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status is 400 Bad Request', () => pm.response.to.have.status(400));",
+                      "pm.test('error code is invalid_id', () => { const j = pm.response.json(); pm.expect(j.error && j.error.code === 'invalid_id').to.be.true; });"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{token}}"
+                  },
+                  {
+                    "key": "X-Tenant-Id",
+                    "value": "{{tenantId}}"
+                  },
+                  {
+                    "key": "X-Organization-Id",
+                    "value": "{{orgId}}"
+                  },
+                  {
+                    "key": "X-Request-Id",
+                    "value": "pm-{{$guid}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/forms/abc",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "forms",
+                    "abc"
+                  ]
+                }
+              }
+            },
+            {
+              "name": "Bad cursor -> 400",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status is 400 Bad Request', () => pm.response.to.have.status(400));",
+                      ""
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{token}}"
+                  },
+                  {
+                    "key": "X-Tenant-Id",
+                    "value": "{{tenantId}}"
+                  },
+                  {
+                    "key": "X-Organization-Id",
+                    "value": "{{orgId}}"
+                  },
+                  {
+                    "key": "X-Request-Id",
+                    "value": "pm-{{$guid}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/forms?cursor=zzz",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "forms?cursor=zzz"
+                  ]
+                }
+              }
+            },
+            {
+              "name": "Publish non-existent version -> 404",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status is 404 Not Found', () => pm.response.to.have.status(404));",
+                      ""
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{token}}"
+                  },
+                  {
+                    "key": "X-Tenant-Id",
+                    "value": "{{tenantId}}"
+                  },
+                  {
+                    "key": "X-Organization-Id",
+                    "value": "{{orgId}}"
+                  },
+                  {
+                    "key": "X-Request-Id",
+                    "value": "pm-{{$guid}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"version\":99}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/forms/{{formId}}/publish",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "forms",
+                    "{{formId}}",
+                    "publish"
+                  ]
+                }
+              }
+            },
+            {
+              "name": "Invalid CRM destination -> 422",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status is 422 Unprocessable Entity', () => pm.response.to.have.status(422));",
+                      ""
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{token}}"
+                  },
+                  {
+                    "key": "X-Tenant-Id",
+                    "value": "{{tenantId}}"
+                  },
+                  {
+                    "key": "X-Organization-Id",
+                    "value": "{{orgId}}"
+                  },
+                  {
+                    "key": "X-Request-Id",
+                    "value": "pm-{{$guid}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"enabled\":true,\"destinationUrl\":\"ftp://x\",\"secretRef\":\"bad\"}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/forms/{{formId}}/crm-integration",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "forms",
+                    "{{formId}}",
+                    "crm-integration"
+                  ]
+                }
+              }
+            },
+            {
+              "name": "Retry while already pending -> 409",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status is 409 Conflict', () => pm.response.to.have.status(409));",
+                      "pm.test('error code is not_retryable', () => { const j = pm.response.json(); pm.expect(j.error && j.error.code === 'not_retryable').to.be.true; });"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{token}}"
+                  },
+                  {
+                    "key": "X-Tenant-Id",
+                    "value": "{{tenantId}}"
+                  },
+                  {
+                    "key": "X-Organization-Id",
+                    "value": "{{orgId}}"
+                  },
+                  {
+                    "key": "X-Request-Id",
+                    "value": "pm-{{$guid}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/submissions/{{submissionId}}/delivery/retry",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "submissions",
+                    "{{submissionId}}",
+                    "delivery",
+                    "retry"
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "Public intake rejections",
+          "item": [
+            {
+              "name": "Unknown public key -> 404",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status is 404 Not Found', () => pm.response.to.have.status(404));",
+                      ""
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"formVersion\": \"{{formVersion}}\",\n  \"fields\": { \"full_name\": \"Asha Sharma\", \"email\": \"{{leadEmail}}\", \"message\": \"Please contact me\" },\n  \"consent\": { \"accepted\": true, \"policyVersion\": \"privacy-v1\" }\n}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/public/forms/pk_unknown/submissions",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "public",
+                    "forms",
+                    "pk_unknown",
+                    "submissions"
+                  ]
+                }
+              }
+            },
+            {
+              "name": "Invalid email -> 422",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status is 422 Unprocessable Entity', () => pm.response.to.have.status(422));",
+                      ""
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"formVersion\": \"{{formVersion}}\",\n  \"fields\": { \"full_name\": \"Asha Sharma\", \"email\": \"not-an-email\", \"message\": \"Please contact me\" },\n  \"consent\": { \"accepted\": true, \"policyVersion\": \"privacy-v1\" }\n}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/public/forms/{{publicKey}}/submissions",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "public",
+                    "forms",
+                    "{{publicKey}}",
+                    "submissions"
+                  ]
+                }
+              }
+            },
+            {
+              "name": "Missing required full_name -> 422",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status is 422 Unprocessable Entity', () => pm.response.to.have.status(422));",
+                      ""
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"formVersion\":\"{{formVersion}}\",\"fields\":{\"email\":\"a@b.co\"},\"consent\":{\"accepted\":true,\"policyVersion\":\"v1\"}}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/public/forms/{{publicKey}}/submissions",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "public",
+                    "forms",
+                    "{{publicKey}}",
+                    "submissions"
+                  ]
+                }
+              }
+            },
+            {
+              "name": "Client-supplied tenant_id rejected -> 422",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status is 422 Unprocessable Entity', () => pm.response.to.have.status(422));",
+                      "pm.test('tenant_id is not trusted', () => { const j = pm.response.json(); pm.expect(j.error.details.tenant_id === \"unknown field\").to.be.true; });"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"formVersion\": \"{{formVersion}}\",\n  \"fields\": { \"full_name\": \"Asha Sharma\", \"email\": \"{{leadEmail}}\", \"tenant_id\": \"1\", \"message\": \"Please contact me\" },\n  \"consent\": { \"accepted\": true, \"policyVersion\": \"privacy-v1\" }\n}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/public/forms/{{publicKey}}/submissions",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "public",
+                    "forms",
+                    "{{publicKey}}",
+                    "submissions"
+                  ]
+                }
+              }
+            },
+            {
+              "name": "Consent not accepted -> 422",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status is 422 Unprocessable Entity', () => pm.response.to.have.status(422));",
+                      ""
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"formVersion\": \"{{formVersion}}\",\n  \"fields\": { \"full_name\": \"Asha Sharma\", \"email\": \"{{leadEmail}}\", \"message\": \"Please contact me\" },\n  \"consent\": { \"accepted\": false, \"policyVersion\": \"privacy-v1\" }\n}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/public/forms/{{publicKey}}/submissions",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "public",
+                    "forms",
+                    "{{publicKey}}",
+                    "submissions"
+                  ]
+                }
+              }
+            },
+            {
+              "name": "Stale formVersion -> 409",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status is 409 Conflict', () => pm.response.to.have.status(409));",
+                      "pm.test('error code is stale_form_version', () => { const j = pm.response.json(); pm.expect(j.error && j.error.code === 'stale_form_version').to.be.true; });"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"formVersion\": \"1\",\n  \"fields\": { \"full_name\": \"Asha Sharma\", \"email\": \"{{leadEmail}}\", \"message\": \"Please contact me\" },\n  \"consent\": { \"accepted\": true, \"policyVersion\": \"privacy-v1\" }\n}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/public/forms/{{publicKey}}/submissions",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "public",
+                    "forms",
+                    "{{publicKey}}",
+                    "submissions"
+                  ]
+                }
+              }
+            },
+            {
+              "name": "Origin not allowed -> 403",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status is 403 Forbidden', () => pm.response.to.have.status(403));",
+                      "pm.test('error code is origin_not_allowed', () => { const j = pm.response.json(); pm.expect(j.error && j.error.code === 'origin_not_allowed').to.be.true; });"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Origin",
+                    "value": "https://evil.example"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"formVersion\": \"{{formVersion}}\",\n  \"fields\": { \"full_name\": \"Asha Sharma\", \"email\": \"{{leadEmail}}\", \"message\": \"Please contact me\" },\n  \"consent\": { \"accepted\": true, \"policyVersion\": \"privacy-v1\" }\n}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/public/forms/{{publicKey}}/submissions",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "public",
+                    "forms",
+                    "{{publicKey}}",
+                    "submissions"
+                  ]
+                }
+              }
+            },
+            {
+              "name": "Invalid Idempotency-Key -> 400",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status is 400 Bad Request', () => pm.response.to.have.status(400));",
+                      ""
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Idempotency-Key",
+                    "value": "has spaces"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"formVersion\": \"{{formVersion}}\",\n  \"fields\": { \"full_name\": \"Asha Sharma\", \"email\": \"{{leadEmail}}\", \"message\": \"Please contact me\" },\n  \"consent\": { \"accepted\": true, \"policyVersion\": \"privacy-v1\" }\n}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/public/forms/{{publicKey}}/submissions",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "public",
+                    "forms",
+                    "{{publicKey}}",
+                    "submissions"
+                  ]
+                }
+              }
+            },
+            {
+              "name": "Invalid JSON -> 400",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status is 400 Bad Request', () => pm.response.to.have.status(400));",
+                      "pm.test('error code is invalid_json', () => { const j = pm.response.json(); pm.expect(j.error && j.error.code === 'invalid_json').to.be.true; });"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{bad json"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/public/forms/{{publicKey}}/submissions",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "public",
+                    "forms",
+                    "{{publicKey}}",
+                    "submissions"
+                  ]
+                }
+              }
+            },
+            {
+              "name": "Payload too large -> 413",
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.collectionVariables.set('bigPayload', JSON.stringify({ fields: { message: 'x'.repeat(40000) } }));"
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status is 413 Payload Too Large', () => pm.response.to.have.status(413));",
+                      ""
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{{bigPayload}}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/public/forms/{{publicKey}}/submissions",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "public",
+                    "forms",
+                    "{{publicKey}}",
+                    "submissions"
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "Ops",
+          "item": [
+            {
+              "name": "Metrics hidden without token -> 404",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status is 404 Not Found', () => pm.response.to.have.status(404));",
+                      ""
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/metrics",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "metrics"
+                  ]
+                }
+              }
+            },
+            {
+              "name": "Unknown route -> 404",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status is 404 Not Found', () => pm.response.to.have.status(404));",
+                      ""
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{token}}"
+                  },
+                  {
+                    "key": "X-Tenant-Id",
+                    "value": "{{tenantId}}"
+                  },
+                  {
+                    "key": "X-Organization-Id",
+                    "value": "{{orgId}}"
+                  },
+                  {
+                    "key": "X-Request-Id",
+                    "value": "pm-{{$guid}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/nope",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "nope"
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "6. Cleanup",
+      "item": [
+        {
+          "name": "Unpublish form",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('unpublished', () => { const j = pm.response.json(); pm.expect(j.data.status === 'unpublished').to.be.true; });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenantId}}"
+              },
+              {
+                "key": "X-Organization-Id",
+                "value": "{{orgId}}"
+              },
+              {
+                "key": "X-Request-Id",
+                "value": "pm-{{$guid}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/forms/{{formId}}/unpublish",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "forms",
+                "{{formId}}",
+                "unpublish"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Unpublished form is no longer public -> 404",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 404 Not Found', () => pm.response.to.have.status(404));",
+                  ""
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/public/forms/{{publicKey}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "public",
+                "forms",
+                "{{publicKey}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Submit to unpublished form -> 404",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 404 Not Found', () => pm.response.to.have.status(404));",
+                  ""
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"formVersion\": \"{{formVersion}}\",\n  \"fields\": { \"full_name\": \"Asha Sharma\", \"email\": \"{{leadEmail}}\", \"message\": \"Please contact me\" },\n  \"consent\": { \"accepted\": true, \"policyVersion\": \"privacy-v1\" }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/public/forms/{{publicKey}}/submissions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "public",
+                "forms",
+                "{{publicKey}}",
+                "submissions"
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

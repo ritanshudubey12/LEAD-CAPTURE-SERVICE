@@ -1,0 +1,16 @@
+{
+  "name": "lead-capturing-service",
+  "version": "2.0.0",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "token": "node scripts/token.js",
+    "test": "node --test --test-concurrency=1 tests/api.test.js",
+    "test:postman": "node scripts/build-postman.js && npx --yes newman run postman/lead-capture.postman_collection.json -e postman/local.postman_environment.json --color off"
+  },
+  "dependencies": {
+    "express": "^4.21.0",
+    "jsonwebtoken": "^9.0.2",
+    "pg": "^8.13.0"
+  }
+}
